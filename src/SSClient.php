@@ -2,6 +2,7 @@
 namespace agumil\SatuSehatSDK;
 
 use agumil\SatuSehatSDK\Auth\Oauth2;
+use agumil\SatuSehatSDK\Consent\Consent;
 use agumil\SatuSehatSDK\FHIR\AllergyIntolerance;
 use agumil\SatuSehatSDK\FHIR\Appointment;
 use agumil\SatuSehatSDK\FHIR\AppointmentResponse;
@@ -182,6 +183,16 @@ class SSClient
     public function updateCondition(string $id, $params)
     {
         return (new Condition($this->oauth2, $this->config))->updateCondition($id, $params);
+    }
+
+    public function getConsent(array $params = [])
+    {
+        return (new Consent($this->oauth2, $this->config))->getConsent($params);
+    }
+
+    public function updateConsentRaw(string $id, $params)
+    {
+        return (new Consent($this->oauth2, $this->config))->updateConsentRaw($id, $params);
     }
 
     public function getDiagnosticReport(array $params = [])
