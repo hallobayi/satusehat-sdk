@@ -3,6 +3,7 @@ namespace agumil\SatuSehatSDK\Request;
 
 use agumil\SatuSehatSDK\Auth\Oauth2;
 use agumil\SatuSehatSDK\Config\Connection;
+use agumil\SatuSehatSDK\Exception\SSDataTypeException;
 use agumil\SatuSehatSDK\Helper\PhiRedactor;
 use agumil\SatuSehatSDK\Helper\ValidatorHelper;
 use GuzzleHttp\Client;
@@ -13,12 +14,34 @@ use Psr\Log\LoggerInterface;
 
 class HttpRequest
 {
+    /**
+     * Status yang layak diulang: rate limit dan gangguan sementara di sisi
+     * server. 4xx lain (400/401/403/404) tidak akan berubah bila diulang.
+     */
+    const RETRYABLE_STATUS = [429, 500, 502, 503, 504];
+
+    /** Batas atas jeda dari header `Retry-After`. */
+    const RETRY_AFTER_MAX_MS = 60000;
+
     private $token;
     private $oauth2;
 
     protected int $timeout = 60;
 
     private ?LoggerInterface $logger = null;
+
+    private int $retry_attempts = 3;
+
+    private int $retry_base_delay_ms = 200;
+
+    private int $retry_max_delay_ms = 5000;
+
+    /**
+     * Hanya method idempoten yang diulang secara default. Mengulang POST bisa
+     * membuat resource tercatat dua kali bila sebenarnya request pertama
+     * berhasil tetapi responsnya hilang di tengah jalan.
+     */
+    private array $retry_methods = ['GET', 'PUT', 'DELETE'];
 
     public function __construct(Oauth2 $oauth2, Connection | array $config = [])
     {
@@ -33,6 +56,32 @@ class HttpRequest
             if (isset($config['logger'])) {
                 $this->logger = $config['logger'];
             }
+
+            if (isset($config['retry_attempts'])) {
+                ValidatorHelper::positiveInt('retry_attempts', $config['retry_attempts']);
+
+                $this->retry_attempts = (int) $config['retry_attempts'];
+            }
+
+            if (isset($config['retry_base_delay_ms'])) {
+                ValidatorHelper::unsignedInt('retry_base_delay_ms', $config['retry_base_delay_ms']);
+
+                $this->retry_base_delay_ms = (int) $config['retry_base_delay_ms'];
+            }
+
+            if (isset($config['retry_max_delay_ms'])) {
+                ValidatorHelper::positiveInt('retry_max_delay_ms', $config['retry_max_delay_ms']);
+
+                $this->retry_max_delay_ms = (int) $config['retry_max_delay_ms'];
+            }
+
+            if (isset($config['retry_methods'])) {
+                if (!is_array($config['retry_methods'])) {
+                    throw new SSDataTypeException('retry_methods must be an array of HTTP methods, e.g. [\'GET\', \'PUT\'].');
+                }
+
+                $this->retry_methods = array_map('strtoupper', $config['retry_methods']);
+            }
         } else {
             $this->timeout = $config->getTimeout();
         }
@@ -43,42 +92,119 @@ class HttpRequest
 
     private function request(string $method, string $url, $payloads = null, bool $retry = true)
     {
-        $guzzle = $this->createClient();
-        $options = $this->initializeOptions($method, $payloads);
-        $started_at = microtime(true);
+        $attempt = 1;
 
-        try {
-            $response = $guzzle->request($method, $url, $options);
-            $this->logExchange($method, $url, $response->getStatusCode(), $payloads, $started_at);
-        } catch (ConnectException $e) {
-            $this->logExchange($method, $url, null, $payloads, $started_at, $e->getMessage());
-            $response = $e->getHandlerContext();
-        } catch (RequestException $e) {
-            // RequestException menaungi ClientException (4xx), ServerException
-            // (5xx), dan kegagalan transfer lain. Kontrak SDK adalah "selalu
-            // mengembalikan Response", jadi semuanya harus ditangkap di sini —
-            // bukan dibiarkan bocor ke aplikasi pemanggil.
-            $error_response = $e->getResponse();
+        while (true) {
+            $guzzle = $this->createClient();
+            $options = $this->initializeOptions($method, $payloads);
+            $started_at = microtime(true);
 
-            if ($error_response === null) {
+            try {
+                $response = $guzzle->request($method, $url, $options);
+                $this->logExchange($method, $url, $response->getStatusCode(), $payloads, $started_at);
+            } catch (ConnectException $e) {
                 $this->logExchange($method, $url, null, $payloads, $started_at, $e->getMessage());
                 $response = $e->getHandlerContext();
-            } elseif (
-                $error_response->getStatusCode() === 401 &&
-                $this->oauth2->isTokenAutoRefresh() &&
-                $retry &&
-                in_array('invalid-access-token', $this->readIssueCodes($error_response), true)
-            ) {
-                $this->logExchange($method, $url, 401, $payloads, $started_at, 'access token invalid, refreshing');
-                $this->token = $this->oauth2->getToken(true);
-                return $this->request($method, $url, $payloads, false);
-            } else {
-                $this->logExchange($method, $url, $error_response->getStatusCode(), $payloads, $started_at);
-                $response = $error_response;
+            } catch (RequestException $e) {
+                // RequestException menaungi ClientException (4xx), ServerException
+                // (5xx), dan kegagalan transfer lain. Kontrak SDK adalah "selalu
+                // mengembalikan Response", jadi semuanya harus ditangkap di sini —
+                // bukan dibiarkan bocor ke aplikasi pemanggil.
+                $error_response = $e->getResponse();
+
+                if ($error_response === null) {
+                    $this->logExchange($method, $url, null, $payloads, $started_at, $e->getMessage());
+                    $response = $e->getHandlerContext();
+                } elseif (
+                    $error_response->getStatusCode() === 401 &&
+                    $this->oauth2->isTokenAutoRefresh() &&
+                    $retry &&
+                    in_array('invalid-access-token', $this->readIssueCodes($error_response), true)
+                ) {
+                    $this->logExchange($method, $url, 401, $payloads, $started_at, 'access token invalid, refreshing');
+                    $this->token = $this->oauth2->getToken(true);
+
+                    return $this->request($method, $url, $payloads, false);
+                } else {
+                    $this->logExchange($method, $url, $error_response->getStatusCode(), $payloads, $started_at);
+                    $response = $error_response;
+                }
+            }
+
+            if (!$this->shouldRetry($method, $response, $attempt)) {
+                return $response;
+            }
+
+            $delay_ms = $this->retryDelayMs($response, $attempt);
+            $this->logRetry($method, $url, $response->getStatusCode(), $attempt, $delay_ms);
+
+            usleep($delay_ms * 1000);
+            $attempt++;
+        }
+    }
+
+    private function shouldRetry(string $method, $response, int $attempt): bool
+    {
+        if ($attempt >= $this->retry_attempts) {
+            return false;
+        }
+
+        if (!in_array($method, $this->retry_methods, true)) {
+            return false;
+        }
+
+        // $response berupa array bila kegagalan terjadi sebelum ada respons
+        // HTTP (mis. koneksi putus); kasus itu tidak diulang di sini.
+        if (!($response instanceof ResponseInterface)) {
+            return false;
+        }
+
+        return in_array($response->getStatusCode(), self::RETRYABLE_STATUS, true);
+    }
+
+    /**
+     * Menghitung jeda sebelum percobaan berikutnya: hormati `Retry-After` bila
+     * ada, jika tidak pakai backoff eksponensial dengan jitter.
+     */
+    private function retryDelayMs(ResponseInterface $response, int $attempt): int
+    {
+        $retry_after = trim($response->getHeaderLine('Retry-After'));
+
+        if ($retry_after !== '') {
+            // Retry-After eksplisit dari server dihormati sampai 60 detik;
+            // batas ini hanya mencegah header aneh menahan proses terlalu lama.
+            if (ctype_digit($retry_after)) {
+                return min((int) $retry_after * 1000, self::RETRY_AFTER_MAX_MS);
+            }
+
+            $timestamp = strtotime($retry_after);
+
+            if ($timestamp !== false) {
+                return min(max(0, $timestamp - time()) * 1000, self::RETRY_AFTER_MAX_MS);
             }
         }
 
-        return $response;
+        $delay = $this->retry_base_delay_ms * (2 ** ($attempt - 1));
+        // Jitter 0-20% agar beberapa proses tidak mengirim ulang pada saat sama.
+        $delay += random_int(0, (int) ($delay * 0.2));
+
+        return min($delay, $this->retry_max_delay_ms);
+    }
+
+    private function logRetry(string $method, string $url, int $status, int $attempt, int $delayMs): void
+    {
+        if ($this->logger === null) {
+            return;
+        }
+
+        $this->logger->warning('SATUSEHAT request retried', [
+            'method' => $method,
+            'url' => PhiRedactor::redactUrl($url),
+            'status' => $status,
+            'attempt' => $attempt,
+            'next_attempt' => $attempt + 1,
+            'delay_ms' => $delayMs,
+        ]);
     }
 
     /**
