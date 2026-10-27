@@ -141,7 +141,7 @@ When the server sends a `Retry-After` header, its value is honoured (capped at 6
 
 ## Partial Update
 
-`createPatient()` replaces the whole resource. To change a single field without resending everything, use `updatePatient()`, which sends a JSON Patch document ([RFC 6902](https://datatracker.ietf.org/doc/html/rfc6902)):
+`createPatient()` always sends the entire resource. To change a single field without resending everything, use `updatePatient()`, which sends a JSON Patch document ([RFC 6902](https://datatracker.ietf.org/doc/html/rfc6902)):
 
 ```php
 $response = $ssclient->updatePatient('P02478375538', [
