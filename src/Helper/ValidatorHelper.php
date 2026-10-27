@@ -98,4 +98,22 @@ class ValidatorHelper
             throw new SSDataTypeException("{$var_name} is required.");
         }
     }
+
+    /**
+     * Memvalidasi `id` resource FHIR sebelum dipakai menyusun URL.
+     *
+     * `id` diinterpolasi mentah ke path (`Patient/{$id}`), jadi nilai seperti
+     * `../../Consent/abc?x=1` dapat menggeser target request ke resource lain
+     * memakai Bearer token milik aplikasi. Pola di bawah mengikuti batasan id
+     * FHIR (1-64 karakter, huruf/angka/titik/strip) dan sengaja mewajibkan
+     * karakter pertama berupa huruf atau angka supaya `.` dan `..` ditolak.
+     */
+    public static function resourceId(string $var_name, string $id): string
+    {
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9\-\.]{0,63}$/', $id)) {
+            throw new SSDataTypeException("{$var_name} is not a valid resource id. The valid value is 1-64 characters of letters, digits, hyphen, or dot, starting with a letter or digit.");
+        }
+
+        return $id;
+    }
 }

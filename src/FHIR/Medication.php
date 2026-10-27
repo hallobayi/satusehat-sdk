@@ -2,6 +2,7 @@
 namespace agumil\SatuSehatSDK\FHIR;
 
 use agumil\SatuSehatSDK\Auth\Oauth2;
+use agumil\SatuSehatSDK\Helper\ValidatorHelper;
 use agumil\SatuSehatSDK\Interface\FHIR\MedicationInterface;
 use agumil\SatuSehatSDK\Request\HttpRequest;
 use agumil\SatuSehatSDK\Response\Response;
@@ -15,6 +16,7 @@ class Medication extends Base implements MedicationInterface
 
     public function getMedicationById(string $id)
     {
+        $id = ValidatorHelper::resourceId('id', $id);
         $url = $this->base_url . "Medication/{$id}";
         $httpRequest = new HttpRequest($this->oauth2, $this->config);
 
@@ -31,6 +33,7 @@ class Medication extends Base implements MedicationInterface
 
     public function updateMedication(string $id, $params)
     {
+        $id = ValidatorHelper::resourceId('id', $id);
         $params['id'] = $id;
 
         $url = $this->base_url . "Medication/{$id}";
