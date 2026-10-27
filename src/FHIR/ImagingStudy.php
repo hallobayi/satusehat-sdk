@@ -22,6 +22,15 @@ class ImagingStudy extends Base implements ImagingStudyInterface
         return new Response($httpRequest->get($url, $params));
     }
 
+    public function getImagingStudyById(string $id)
+    {
+        $id = ValidatorHelper::resourceId('id', $id);
+        $url = $this->base_url . "ImagingStudy/{$id}";
+        $httpRequest = new HttpRequest($this->oauth2, $this->config);
+
+        return new Response($httpRequest->get($url));
+    }
+
     public function createImagingStudy($params)
     {
         $url = $this->base_url . 'ImagingStudy';

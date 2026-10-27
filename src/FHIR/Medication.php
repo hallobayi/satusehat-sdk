@@ -14,6 +14,14 @@ class Medication extends Base implements MedicationInterface
         parent::__construct($oauth2, $config);
     }
 
+    public function getMedication(array $params = [])
+    {
+        $url = $this->base_url . 'Medication';
+        $httpRequest = new HttpRequest($this->oauth2, $this->config);
+
+        return new Response($httpRequest->get($url, $params));
+    }
+
     public function getMedicationById(string $id)
     {
         $id = ValidatorHelper::resourceId('id', $id);

@@ -300,6 +300,11 @@ class SSClient
         return (new ImagingStudy($this->oauth2, $this->config))->getImagingStudy($params);
     }
 
+    public function getImagingStudyById(string $id)
+    {
+        return (new ImagingStudy($this->oauth2, $this->config))->getImagingStudyById($id);
+    }
+
     public function createImagingStudy($params)
     {
         return (new ImagingStudy($this->oauth2, $this->config))->createImagingStudy($params);
@@ -368,6 +373,11 @@ class SSClient
     public function updateMedicationDispense(string $id, $params)
     {
         return (new MedicationDispense($this->oauth2, $this->config))->updateMedicationDispense($id, $params);
+    }
+
+    public function getMedication(array $params = [])
+    {
+        return (new Medication($this->oauth2, $this->config))->getMedication($params);
     }
 
     public function getMedicationById(string $id)
@@ -573,6 +583,11 @@ class SSClient
     public function updateServiceRequest(string $id, $params)
     {
         return (new ServiceRequest($this->oauth2, $this->config))->updateServiceRequest($id, $params);
+    }
+
+    public function getSlot(array $params = [])
+    {
+        return (new Slot($this->oauth2, $this->config))->getSlot($params);
     }
 
     public function getSlotById(string $id)
