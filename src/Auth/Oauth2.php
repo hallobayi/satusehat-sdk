@@ -29,6 +29,8 @@ class Oauth2
     // Opt-in
     private $auto_refresh_token = false;
 
+    private TokenStoreInterface $token_store;
+
     private $event_listener = [
         'token_changed' => []
     ];
@@ -88,6 +90,20 @@ class Oauth2
         if (isset($config['auto_refresh_token'])) {
             $this->auto_refresh_token = $config['auto_refresh_token'];
         }
+
+        // Default tetap per-instance (perilaku lama). Isi dengan FileTokenStore
+        // bila token perlu dipakai bersama antar proses.
+        $token_store = $config['token_store'] ?? new InMemoryTokenStore();
+
+        if (!($token_store instanceof TokenStoreInterface)) {
+            throw new SSEnvException('Oauth2 - Configuration \'token_store\' must implement ' . TokenStoreInterface::class . '.');
+        }
+
+        $this->token_store = $token_store;
+
+        if ($this->token !== null && $this->token_expired_at > 0) {
+            $this->token_store->set($this->token, (int) $this->token_expired_at);
+        }
     }
 
     public function getContent()
@@ -97,30 +113,89 @@ class Oauth2
 
     public function getToken(bool $refreshToken = false)
     {
-        $now = (new DateTime('now'))->getTimestamp();
         if ($refreshToken) {
-            $this->token_expired_at = 0;
+            $this->adoptToken(null, 0);
+            $this->token_store->delete();
         }
-        if ($now >= $this->token_expired_at) {
-            $response = $this->generateToken();
-            if ($response->getHttpStatus() !== $response::STATUS_2XX) {
-                $this->token = null;
-                $this->token_expired_at = 0;
-                $this->fireTokenChanged();
-                throw new SSOauth2Exception($response->getContent());
-            }
 
-            $response = json_decode($response->getContent());
-            $accessToken = $response->access_token;
-            $expiresIn = $response->expires_in - 60;
-            $expiredAt = (new DateTime('now'))->add(new DateInterval("PT{$expiresIn}S"))->getTimestamp();
+        $now = (new DateTime('now'))->getTimestamp();
 
-            $this->token = $accessToken;
-            $this->token_expired_at = $expiredAt;
-            $this->fireTokenChanged();
+        if ($this->token !== null && $now < $this->token_expired_at) {
+            return $this->token;
         }
+
+        // Token mungkin sudah diperbarui proses lain; store lintas proses
+        // diperiksa lebih dulu supaya tidak ada request token yang sia-sia.
+        $cached = $this->token_store->get();
+
+        if ($cached !== null && $now < $cached['expires_at']) {
+            $this->adoptToken($cached['token'], $cached['expires_at']);
+
+            return $this->token;
+        }
+
+        // refresh() mengunci store selama request token berjalan, sehingga
+        // beberapa proses yang bersamaan tetap hanya menghasilkan satu request.
+        $fresh = $this->token_store->refresh(function () {
+            return $this->requestNewToken();
+        });
+
+        $this->adoptToken($fresh['token'], $fresh['expires_at']);
 
         return $this->token;
+    }
+
+    /**
+     * Meminta access token baru ke SATUSEHAT.
+     *
+     * @return array{token: string, expires_at: int}
+     */
+    protected function requestNewToken(): array
+    {
+        $response = $this->generateToken();
+
+        if ($response->getHttpStatus() !== $response::STATUS_2XX) {
+            $this->adoptToken(null, 0);
+            $this->token_store->delete();
+
+            throw new SSOauth2Exception($response->getContent());
+        }
+
+        $body = json_decode($response->getContent());
+
+        // 2xx tanpa access_token/expires_in (mis. halaman HTML dari proxy)
+        // harus gagal di sini, bukan menjadi token null di tengah request.
+        if (!is_object($body) || !isset($body->access_token) || !isset($body->expires_in)) {
+            $this->adoptToken(null, 0);
+            $this->token_store->delete();
+
+            throw new SSOauth2Exception('Oauth2 - Token response is not recognized: ' . $response->getContent());
+        }
+
+        // Dikurangi 60 detik agar token tidak kedaluwarsa di tengah request,
+        // dan tidak pernah negatif bila server memberi expires_in < 60.
+        $lifetime = max(0, (int) $body->expires_in - 60);
+        $expiredAt = (new DateTime('now'))->add(new DateInterval("PT{$lifetime}S"))->getTimestamp();
+
+        return [
+            'token' => (string) $body->access_token,
+            'expires_at' => $expiredAt,
+        ];
+    }
+
+    /**
+     * Menetapkan token sekaligus memicu `token_changed` hanya bila nilainya
+     * benar-benar berubah.
+     */
+    private function adoptToken(?string $token, int $expiredAt): void
+    {
+        if ($this->token === $token && $this->token_expired_at === $expiredAt) {
+            return;
+        }
+
+        $this->token = $token;
+        $this->token_expired_at = $expiredAt;
+        $this->fireTokenChanged();
     }
 
     private function fireTokenChanged()
