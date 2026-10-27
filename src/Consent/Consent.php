@@ -6,6 +6,7 @@ use agumil\SatuSehatSDK\Config\Endpoint;
 use agumil\SatuSehatSDK\Exception\SSEnvException;
 use agumil\SatuSehatSDK\Helper\EnvHelper;
 use agumil\SatuSehatSDK\Helper\StrHelper;
+use agumil\SatuSehatSDK\Helper\ValidatorHelper;
 use agumil\SatuSehatSDK\Interface\Consent\ConsentInterface;
 use agumil\SatuSehatSDK\Request\HttpRequest;
 use agumil\SatuSehatSDK\Response\Response;
@@ -43,6 +44,7 @@ class Consent implements ConsentInterface
 
     public function updateConsentRaw(string $id, $params)
     {
+        $id = ValidatorHelper::resourceId('id', $id);
         $url = StrHelper::appendSlash($this->base_url) . "Consent/{$id}";
         $httpRequest = new HttpRequest($this->oauth2, $this->config);
 
