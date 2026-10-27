@@ -3,6 +3,7 @@ namespace agumil\SatuSehatSDK\KFA;
 
 use agumil\SatuSehatSDK\Auth\Oauth2;
 use agumil\SatuSehatSDK\Config\Endpoint;
+use agumil\SatuSehatSDK\Exception\SSDataTypeException;
 use agumil\SatuSehatSDK\Exception\SSEnvException;
 use agumil\SatuSehatSDK\Helper\EnvHelper;
 
@@ -34,21 +35,32 @@ class Base
 
     protected function baseURL(int $version)
     {
-        switch ($this->environment) {
-            case 'production':
-                $base_url = $version == 1 ? Endpoint::PROD_KFA_V1 : Endpoint::PROD_KFA_V2;
-                break;
+        // Pemetaan environment -> versi API. Dokumentasi KFA memisahkan v1
+        // (harga JKN), v2 (produk), dan v3 (ALKES) pada base URL berbeda.
+        $endpoints = [
+            'production' => [
+                1 => Endpoint::PROD_KFA_V1,
+                2 => Endpoint::PROD_KFA_V2,
+                3 => Endpoint::PROD_KFA_V3,
+            ],
+            'staging' => [
+                1 => Endpoint::STG_KFA_V1,
+                2 => Endpoint::STG_KFA_V2,
+                3 => Endpoint::STG_KFA_V3,
+            ],
+            'development' => [
+                1 => Endpoint::DEV_KFA_V1,
+                2 => Endpoint::DEV_KFA_V2,
+                3 => Endpoint::DEV_KFA_V3,
+            ],
+        ];
 
-            case 'staging':
-                $base_url = $version == 1 ? Endpoint::STG_KFA_V1 : Endpoint::STG_KFA_V2;
-                break;
+        $environment = isset($endpoints[$this->environment]) ? $this->environment : 'development';
 
-            case 'development':
-            default:
-                $base_url = $version == 1 ? Endpoint::DEV_KFA_V1 : Endpoint::DEV_KFA_V2;
-                break;
+        if (!isset($endpoints[$environment][$version])) {
+            throw new SSDataTypeException("KFA API version {$version} is not available.");
         }
 
-        return $base_url;
+        return $endpoints[$environment][$version];
     }
 }
