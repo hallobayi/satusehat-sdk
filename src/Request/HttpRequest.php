@@ -189,6 +189,15 @@ class HttpRequest
         return $this->request('PUT', $url, $payloads);
     }
 
+    /**
+     * PATCH dipakai SATUSEHAT untuk update parsial (JSON Patch, RFC 6902).
+     * `Patient` hanya mendukung PATCH, tidak ada PUT.
+     */
+    public function patch(string $url, $payloads = null)
+    {
+        return $this->request('PATCH', $url, $payloads);
+    }
+
     public function delete(string $url, $payloads = null)
     {
         return $this->request('DELETE', $url, $payloads);

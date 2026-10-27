@@ -449,6 +449,11 @@ class SSClient
         return (new Patient($this->oauth2, $this->config))->createPatient($params);
     }
 
+    public function updatePatient(string $id, array $params)
+    {
+        return (new Patient($this->oauth2, $this->config))->updatePatient($id, $params);
+    }
+
     public function getPractitioner(array $params = [])
     {
         return (new Practitioner($this->oauth2, $this->config))->getPractitioner($params);
