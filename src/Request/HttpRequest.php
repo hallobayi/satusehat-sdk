@@ -63,20 +63,38 @@ class HttpRequest
             'Authorization' => 'Bearer ' . $this->token,
         ];
         $options['timeout'] = $this->timeout;
-        if (!empty($payloads)) {
-            try {
-                $options['json'] = $payloads->build();
-            } catch (\Throwable $th) {
-                if ($method === 'GET') {
-                    $options['query'] = $payloads;
-                } elseif (is_string($payloads)) {
-                    $options['body'] = $payloads;
-                } elseif (is_array($payloads)) {
-                    $options['json'] = $payloads;
-                } else {
-                    $options['body'] = json_encode($payloads);
-                }
+
+        if ($payloads === null || $payloads === [] || $payloads === '') {
+            return $options;
+        }
+
+        // Tipe payload dideteksi eksplisit. Sebelumnya `$payloads->build()`
+        // dibungkus `catch (\Throwable)` sebagai cara membedakan builder dari
+        // array; akibatnya exception validasi dari builder ikut tertelan dan
+        // SDK tetap mengirim body `{}` (objek ber-properti private di-encode
+        // jadi objek kosong). Sekarang exception builder dibiarkan naik supaya
+        // gagal cepat di sisi pemanggil, bukan jadi 400 yang membingungkan.
+        if (is_array($payloads)) {
+            // GET tidak punya body; array pada GET adalah query string.
+            if ($method === 'GET') {
+                $options['query'] = $payloads;
+            } else {
+                $options['json'] = $payloads;
             }
+
+            return $options;
+        }
+
+        if (is_object($payloads) && method_exists($payloads, 'build')) {
+            $options['json'] = $payloads->build();
+
+            return $options;
+        }
+
+        if (is_string($payloads)) {
+            $options['body'] = $payloads;
+        } else {
+            $options['body'] = json_encode($payloads);
         }
 
         return $options;
