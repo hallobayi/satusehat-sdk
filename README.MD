@@ -60,12 +60,14 @@ $ composer require vlucas/phpdotenv
 
 Supported ENV:
 ```bash
-# Choose one of the two options below
+# development | staging | production
 SATUSEHAT_ENV=development|staging|production
 SATUSEHAT_ORGANIZATION_ID=organization_id
 SATUSEHAT_CLIENT_ID=client_id
 SATUSEHAT_CLIENT_SECRET=client_secret
 ```
+
+`SATUSEHAT_ENV` menentukan host untuk seluruh modul (FHIR, Consent, KFA, KYC, dan OAuth2): `development` → `api-satusehat-dev.dto.kemkes.go.id`, `staging` → `api-satusehat-stg.dto.kemkes.go.id`, `production` → `api-satusehat.kemkes.go.id`. Nilai `.env` didahulukan; parameter `'environment'` pada config hanya dipakai bila `.env` tidak diisi.
 
 > **Note**
 > Logging is optional. The SDK depends on `psr/log` (interfaces only) but writes
@@ -87,20 +89,21 @@ $response = $ssclient->getPractitioner([
 Without PHPDOTENV
 ```php
 use agumil\SatuSehatSDK\Auth\Oauth2;
-use agumil\SatuSehatSDK\Endpoint;
 use agumil\SatuSehatSDK\SSClient;
 
-$config1['base_url'] = Endpoint::DEV_OAUTH2;
+$config1['environment'] = 'development';
 $config1['client_id'] = 'your_client_id';
 $config1['client_secret'] = 'your_client_secret';
 
-$config2['base_url'] = Endpoint::DEV_FHIR;
+$config2['environment'] = 'development';
 
 $ssclient = new SSClient(new Oauth2($config1), $config2);
 $response = $ssclient->getPractitioner([
     'identifier' => 'https://fhir.kemkes.go.id/id/nakes-his-number|10009880728',
 ]);
 ```
+
+Host ditentukan oleh `environment`, bukan oleh URL yang Anda masukkan. Tidak ada kunci `base_url`: bila URL bisa diatur pemanggil, satu payload yang salah dapat mengarahkan Bearer token ke host lain (SSRF).
 
 ## Configuration
 
@@ -233,7 +236,7 @@ Beberapa hal yang perlu diketahui:
 - `$urlToken` dikirim sebagai header `X-Frame-Token`. SDK tidak menyimpannya, jadi ambil dari respons `generate-url()` lalu teruskan sendiri.
 - `$debugMode = true` menambahkan `X-Debug-Mode: 1` supaya challenge code dikembalikan langsung tanpa widget KYC. Pakai hanya di development/staging: server production menolaknya, dan mode ini melewati verifikasi yang seharusnya dilakukan pasien.
 - NIK diperiksa 16 digit sebelum dikirim, karena respons memuat `ihs_number` milik NIK tersebut — salah ketik berarti challenge code untuk orang lain.
-- Lingkungan mengikuti `SATUSEHAT_ENV` (`.env` didahulukan) atau `'environment'` pada config. Nilai yang sah: `development`, `staging`, `production`. Modul FHIR, Consent, dan KFA masih hanya menerima `staging`/`production`.
+- Lingkungan mengikuti `SATUSEHAT_ENV` (`.env` didahulukan) atau `'environment'` pada config. Nilai yang sah: `development`, `staging`, `production` — sama seperti modul lain.
 
 ## Logging
 
