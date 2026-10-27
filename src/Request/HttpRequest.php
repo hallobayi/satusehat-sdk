@@ -3,11 +3,13 @@ namespace agumil\SatuSehatSDK\Request;
 
 use agumil\SatuSehatSDK\Auth\Oauth2;
 use agumil\SatuSehatSDK\Config\Connection;
+use agumil\SatuSehatSDK\Helper\PhiRedactor;
 use agumil\SatuSehatSDK\Helper\ValidatorHelper;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\RequestException;
 use Psr\Http\Message\ResponseInterface;
+use Psr\Log\LoggerInterface;
 
 class HttpRequest
 {
@@ -16,6 +18,8 @@ class HttpRequest
 
     protected int $timeout = 60;
 
+    private ?LoggerInterface $logger = null;
+
     public function __construct(Oauth2 $oauth2, Connection | array $config = [])
     {
         if (!($config instanceof Connection)) {
@@ -23,6 +27,11 @@ class HttpRequest
                 ValidatorHelper::unsignedInt('timeout', $config['timeout']);
 
                 $this->timeout = (int) $config['timeout'];
+            }
+
+            // Logger opsional (PSR-3). Tanpa logger, SDK tidak menulis log apa pun.
+            if (isset($config['logger'])) {
+                $this->logger = $config['logger'];
             }
         } else {
             $this->timeout = $config->getTimeout();
@@ -36,9 +45,13 @@ class HttpRequest
     {
         $guzzle = $this->createClient();
         $options = $this->initializeOptions($method, $payloads);
+        $started_at = microtime(true);
+
         try {
             $response = $guzzle->request($method, $url, $options);
+            $this->logExchange($method, $url, $response->getStatusCode(), $payloads, $started_at);
         } catch (ConnectException $e) {
+            $this->logExchange($method, $url, null, $payloads, $started_at, $e->getMessage());
             $response = $e->getHandlerContext();
         } catch (RequestException $e) {
             // RequestException menaungi ClientException (4xx), ServerException
@@ -48,6 +61,7 @@ class HttpRequest
             $error_response = $e->getResponse();
 
             if ($error_response === null) {
+                $this->logExchange($method, $url, null, $payloads, $started_at, $e->getMessage());
                 $response = $e->getHandlerContext();
             } elseif (
                 $error_response->getStatusCode() === 401 &&
@@ -55,14 +69,55 @@ class HttpRequest
                 $retry &&
                 in_array('invalid-access-token', $this->readIssueCodes($error_response), true)
             ) {
+                $this->logExchange($method, $url, 401, $payloads, $started_at, 'access token invalid, refreshing');
                 $this->token = $this->oauth2->getToken(true);
                 return $this->request($method, $url, $payloads, false);
             } else {
+                $this->logExchange($method, $url, $error_response->getStatusCode(), $payloads, $started_at);
                 $response = $error_response;
             }
         }
 
         return $response;
+    }
+
+    /**
+     * Mencatat satu pertukaran HTTP. Payload dan query string disaring lebih
+     * dulu lewat PhiRedactor supaya data pasien tidak masuk ke log.
+     */
+    private function logExchange(string $method, string $url, ?int $status, $payloads, float $startedAt, ?string $note = null): void
+    {
+        if ($this->logger === null) {
+            return;
+        }
+
+        $context = [
+            'method' => $method,
+            'url' => PhiRedactor::redactUrl($url),
+            'status' => $status,
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ];
+
+        if (is_array($payloads) && $payloads !== []) {
+            $context['payload'] = PhiRedactor::redact($payloads);
+        } elseif (is_string($payloads)) {
+            // Body mentah bisa memuat PHI; yang dicatat hanya ukurannya.
+            $context['payload_bytes'] = strlen($payloads);
+        } elseif (is_object($payloads)) {
+            $context['payload_class'] = get_class($payloads);
+        }
+
+        if ($note !== null) {
+            $context['note'] = $note;
+        }
+
+        if ($status === null || $status >= 500) {
+            $this->logger->error('SATUSEHAT request failed', $context);
+        } elseif ($status >= 400) {
+            $this->logger->warning('SATUSEHAT request rejected', $context);
+        } else {
+            $this->logger->debug('SATUSEHAT request', $context);
+        }
     }
 
     /**
