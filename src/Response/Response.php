@@ -84,6 +84,13 @@ class Response
 
     public function getErrorMessages()
     {
+        // Respons sukses tidak punya pesan error. Tanpa guard ini, body 2xx
+        // (mis. {"message":"success"} pada KFA v3) akan dilaporkan sebagai
+        // error oleh pemanggil yang memeriksa daftar pesan.
+        if ($this->http_code >= 100 && $this->http_code < 400) {
+            return [];
+        }
+
         $content = $this->getContentAsArray();
         $messages = [];
 
