@@ -26,7 +26,9 @@ class Base
         }
 
         $this->oauth2 = $oauth2;
-        $this->environment = $config['environment'];
+        // `environment` sudah ditentukan di blok di atas. Jangan ditimpa dari
+        // $config lagi: bila nilainya hanya berasal dari .env, key itu tidak ada
+        // dan properti bertipe string ini akan menerima null (TypeError).
         $this->config = $config;
     }
 
