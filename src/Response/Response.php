@@ -88,13 +88,34 @@ class Response
         $messages = [];
 
         if ($this->response instanceof ResponseInterface) {
-            foreach ($content['issue'] ?? [] as $issue) {
-                $tmpMsg = strtoupper($issue['severity']) . '::' . $issue['details']['text'];
-                if (isset($issue['diagnostics'])) {
-                    $tmpMsg = $tmpMsg . ' - ' . $issue['diagnostics'];
+            // OperationOutcome tidak selalu lengkap: `details` dan `severity`
+            // boleh tidak ada. Tanpa guard, satu issue tanpa details memunculkan
+            // warning sekaligus menghilangkan pesan error-nya sendiri.
+            $issues = isset($content['issue']) && is_array($content['issue']) ? $content['issue'] : [];
+
+            foreach ($issues as $issue) {
+                if (!is_array($issue)) {
+                    continue;
+                }
+
+                $severity = strtoupper($issue['severity'] ?? 'unknown');
+                $text = $issue['details']['text'] ?? null;
+                $diagnostics = $issue['diagnostics'] ?? null;
+                $code = $issue['code'] ?? null;
+
+                $tmpMsg = $severity . '::' . ($text ?? $diagnostics ?? $code ?? 'Unknown error');
+
+                if ($text !== null && $diagnostics !== null) {
+                    $tmpMsg = $tmpMsg . ' - ' . $diagnostics;
                 }
 
                 $messages[] = $tmpMsg;
+            }
+
+            // 5xx dari gateway biasanya text/plain ("Gateway Timeout"), bukan
+            // OperationOutcome. Kembalikan apa adanya agar tidak tampak kosong.
+            if ($messages === [] && $content === null && trim($this->content) !== '') {
+                $messages[] = trim($this->content);
             }
         } else {
             $messages[] = $content['error'] ?? '';

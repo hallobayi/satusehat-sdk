@@ -5,8 +5,9 @@ use agumil\SatuSehatSDK\Auth\Oauth2;
 use agumil\SatuSehatSDK\Config\Connection;
 use agumil\SatuSehatSDK\Helper\ValidatorHelper;
 use GuzzleHttp\Client;
-use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
+use Psr\Http\Message\ResponseInterface;
 
 class HttpRequest
 {
@@ -33,27 +34,100 @@ class HttpRequest
 
     private function request(string $method, string $url, $payloads = null, bool $retry = true)
     {
-        $guzzle = new Client();
+        $guzzle = $this->createClient();
         $options = $this->initializeOptions($method, $payloads);
         try {
             $response = $guzzle->request($method, $url, $options);
         } catch (ConnectException $e) {
             $response = $e->getHandlerContext();
-        } catch (ClientException $e) {
-            if (
-                $e->getCode() === 401 &&
+        } catch (RequestException $e) {
+            // RequestException menaungi ClientException (4xx), ServerException
+            // (5xx), dan kegagalan transfer lain. Kontrak SDK adalah "selalu
+            // mengembalikan Response", jadi semuanya harus ditangkap di sini —
+            // bukan dibiarkan bocor ke aplikasi pemanggil.
+            $error_response = $e->getResponse();
+
+            if ($error_response === null) {
+                $response = $e->getHandlerContext();
+            } elseif (
+                $error_response->getStatusCode() === 401 &&
                 $this->oauth2->isTokenAutoRefresh() &&
                 $retry &&
-                json_decode($e->getResponse()->getBody()->getContents())->issue->code === 'invalid-access-token'
+                in_array('invalid-access-token', $this->readIssueCodes($error_response), true)
             ) {
                 $this->token = $this->oauth2->getToken(true);
                 return $this->request($method, $url, $payloads, false);
+            } else {
+                $response = $error_response;
             }
-
-            $response = $e->getResponse();
         }
 
         return $response;
+    }
+
+    /**
+     * Seam untuk pengujian: subclass dapat mengganti client dengan handler tiruan
+     * tanpa menyentuh jaringan, dan nanti bisa dipakai untuk connection reuse.
+     */
+    protected function createClient(): Client
+    {
+        return new Client();
+    }
+
+    /**
+     * Mengambil seluruh kode issue dari body error tanpa menghabiskan stream.
+     *
+     * Body dibaca sekali lalu stream di-rewind, karena `Response` membaca body
+     * lewat getContents() saat konstruksi. Tanpa rewind, pesan error asli dari
+     * SATUSEHAT hilang dan `getErrorMessages()` mengembalikan array kosong.
+     *
+     * `issue` pada OperationOutcome adalah array (0..*), tetapi ada server yang
+     * mengirim objek tunggal — keduanya diterima. Bentuk array inilah yang
+     * membuat pemeriksaan lama `->issue->code` selalu null sehingga auto-refresh
+     * token tidak pernah terpicu.
+     */
+    private function readIssueCodes(ResponseInterface $response): array
+    {
+        $stream = $response->getBody();
+        $seekable = $stream->isSeekable();
+
+        if ($seekable) {
+            $stream->rewind();
+        }
+
+        $body = $stream->getContents();
+
+        if ($seekable) {
+            $stream->rewind();
+        }
+
+        // Body error bisa saja bukan JSON (mis. halaman HTML dari gateway),
+        // jadi hasil decode tidak boleh diakses tanpa pemeriksaan.
+        $decoded = json_decode($body, true);
+
+        if (!is_array($decoded) || !isset($decoded['issue'])) {
+            return [];
+        }
+
+        $issues = $decoded['issue'];
+
+        if (isset($issues['code'])) {
+            return [(string) $issues['code']];
+        }
+
+        if (!is_array($issues)) {
+            return [];
+        }
+
+        $codes = [];
+
+        foreach ($issues as $issue) {
+            if (is_array($issue) && isset($issue['code'])) {
+                $codes[] = (string) $issue['code'];
+            }
+        }
+
+        return $codes;
     }
 
     private function initializeOptions($method, $payloads)
