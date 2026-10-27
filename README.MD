@@ -9,6 +9,7 @@
   <a href="#configuration">Configuration</a> •
   <a href="#partial-update">Partial Update</a> •
   <a href="#paging">Paging</a> •
+  <a href="#kyc">KYC</a> •
   <a href="#logging">Logging</a> •
   <a href="#token-caching">Token Caching</a> •
   <a href="#license">License</a>
@@ -60,7 +61,7 @@ $ composer require vlucas/phpdotenv
 Supported ENV:
 ```bash
 # Choose one of the two options below
-SATUSEHAT_ENV=staging|production
+SATUSEHAT_ENV=development|staging|production
 SATUSEHAT_ORGANIZATION_ID=organization_id
 SATUSEHAT_CLIENT_ID=client_id
 SATUSEHAT_CLIENT_SECRET=client_secret
@@ -190,6 +191,49 @@ BundleHelper::total($bundle);            // int|null
 BundleHelper::nextUrl($bundle);          // string|null
 BundleHelper::nextParams($bundle);       // array|null of query params
 ```
+
+## KYC
+
+KYC (verifikasi NIK) punya base URL sendiri (`/kyc/v1`) dengan Bearer token yang sama, jadi ia dipakai lewat client terpisah: `SSClientKYC`.
+
+Alurnya tiga langkah, dan SDK hanya mengerjakan dua di antaranya — enkripsi dan dekripsi tetap di sisi aplikasi karena kuncinya dipegang faskes:
+
+1. **Enkripsi** pesan permintaan memakai kunci publik dari Kemkes (di luar SDK).
+2. `generateUrl()` menukar pesan terenkripsi itu dengan sesi KYC. Responsnya masih ciphertext; dekripsikan untuk mengambil `url_token`.
+3. `generateChallengeCode()` atau `requestPerNik()` meminta challenge code memakai `url_token` tersebut.
+
+```php
+use agumil\SatuSehatSDK\Auth\Oauth2;
+use agumil\SatuSehatSDK\SSClientKYC;
+
+$kyc = new SSClientKYC(new Oauth2(), ['environment' => 'development']);
+
+$url_response = $kyc->generateUrl($encrypted_message); // text/plain, masih ciphertext
+$url_token = /* hasil dekripsi di sisi aplikasi */;
+
+$response = $kyc->requestPerNik('3171022809990001', 'Budi Santoso', $url_token);
+
+if ($response->getHttpCode() === 200) {
+    $data = $response->getContentAsObject()->data;
+
+    echo $data->ihs_number;        // IHS Number pasien pemilik NIK
+    echo $data->challenge_code;    // 6 digit
+    echo $data->expired_timestamp; // batas waktu challenge code
+}
+```
+
+| Method | Endpoint | Keterangan |
+| --- | --- | --- |
+| `generateUrl(string $encryptedMessage)` | `POST /kyc/v1/generate-url` | Body dikirim apa adanya sebagai `text/plain`. |
+| `generateChallengeCode(array $params, string $urlToken, bool $debugMode = false)` | `POST /kyc/v1/challenge-code` | `$params` berisi `['metadata' => [...], 'data' => [...]]`. |
+| `requestPerNik(string $nik, string $name, string $urlToken, bool $debugMode = false)` | `POST /kyc/v1/challenge-code` | Pintasan dengan `metadata.method = request_per_nik`. |
+
+Beberapa hal yang perlu diketahui:
+
+- `$urlToken` dikirim sebagai header `X-Frame-Token`. SDK tidak menyimpannya, jadi ambil dari respons `generate-url()` lalu teruskan sendiri.
+- `$debugMode = true` menambahkan `X-Debug-Mode: 1` supaya challenge code dikembalikan langsung tanpa widget KYC. Pakai hanya di development/staging: server production menolaknya, dan mode ini melewati verifikasi yang seharusnya dilakukan pasien.
+- NIK diperiksa 16 digit sebelum dikirim, karena respons memuat `ihs_number` milik NIK tersebut — salah ketik berarti challenge code untuk orang lain.
+- Lingkungan mengikuti `SATUSEHAT_ENV` (`.env` didahulukan) atau `'environment'` pada config. Nilai yang sah: `development`, `staging`, `production`. Modul FHIR, Consent, dan KFA masih hanya menerima `staging`/`production`.
 
 ## Logging
 

@@ -90,13 +90,13 @@ class HttpRequest
         $this->token = $oauth2->getToken();
     }
 
-    private function request(string $method, string $url, $payloads = null, bool $retry = true)
+    private function request(string $method, string $url, $payloads = null, bool $retry = true, array $headers = [])
     {
         $attempt = 1;
 
         while (true) {
             $guzzle = $this->createClient();
-            $options = $this->initializeOptions($method, $payloads);
+            $options = $this->initializeOptions($method, $payloads, $headers);
             $started_at = microtime(true);
 
             try {
@@ -124,7 +124,7 @@ class HttpRequest
                     $this->logExchange($method, $url, 401, $payloads, $started_at, 'access token invalid, refreshing');
                     $this->token = $this->oauth2->getToken(true);
 
-                    return $this->request($method, $url, $payloads, false);
+                    return $this->request($method, $url, $payloads, false, $headers);
                 } else {
                     $this->logExchange($method, $url, $error_response->getStatusCode(), $payloads, $started_at);
                     $response = $error_response;
@@ -311,13 +311,26 @@ class HttpRequest
         return $codes;
     }
 
-    private function initializeOptions($method, $payloads)
+    private function initializeOptions($method, $payloads, array $headers = [])
     {
         $options['headers'] = [
             'Content-Type' => 'application/json',
             'Authorization' => 'Bearer ' . $this->token,
         ];
         $options['timeout'] = $this->timeout;
+
+        // Header tambahan per-request (mis. `X-Frame-Token` pada KYC). Nama
+        // header tidak peka huruf besar/kecil, jadi varian lama dibuang lebih
+        // dulu agar `content-type` tidak terkirim dua kali bersama `Content-Type`.
+        foreach ($headers as $name => $value) {
+            foreach (array_keys($options['headers']) as $existing) {
+                if (strcasecmp($existing, $name) === 0) {
+                    unset($options['headers'][$existing]);
+                }
+            }
+
+            $options['headers'][$name] = $value;
+        }
 
         if ($payloads === null || $payloads === [] || $payloads === '') {
             return $options;
@@ -355,32 +368,32 @@ class HttpRequest
         return $options;
     }
 
-    public function get(string $url, array $payloads = [])
+    public function get(string $url, array $payloads = [], array $headers = [])
     {
-        return $this->request('GET', $url, $payloads);
+        return $this->request('GET', $url, $payloads, true, $headers);
     }
 
-    public function post(string $url, $payloads = null)
+    public function post(string $url, $payloads = null, array $headers = [])
     {
-        return $this->request('POST', $url, $payloads);
+        return $this->request('POST', $url, $payloads, true, $headers);
     }
 
-    public function put(string $url, $payloads = null)
+    public function put(string $url, $payloads = null, array $headers = [])
     {
-        return $this->request('PUT', $url, $payloads);
+        return $this->request('PUT', $url, $payloads, true, $headers);
     }
 
     /**
      * PATCH dipakai SATUSEHAT untuk update parsial (JSON Patch, RFC 6902).
      * `Patient` hanya mendukung PATCH, tidak ada PUT.
      */
-    public function patch(string $url, $payloads = null)
+    public function patch(string $url, $payloads = null, array $headers = [])
     {
-        return $this->request('PATCH', $url, $payloads);
+        return $this->request('PATCH', $url, $payloads, true, $headers);
     }
 
-    public function delete(string $url, $payloads = null)
+    public function delete(string $url, $payloads = null, array $headers = [])
     {
-        return $this->request('DELETE', $url, $payloads);
+        return $this->request('DELETE', $url, $payloads, true, $headers);
     }
 }

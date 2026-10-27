@@ -37,13 +37,15 @@ class Oauth2
 
     public function __construct(array $config = [])
     {
-        if (EnvHelper::isStaging() || $config['environment'] === 'staging') {
+        if (EnvHelper::isDevelopment() || ($config['environment'] ?? null) === 'development') {
+            $this->base_url = Endpoint::DEV_OAUTH2;
+        } elseif (EnvHelper::isStaging() || ($config['environment'] ?? null) === 'staging') {
             $this->base_url = Endpoint::STG_OAUTH2;
-        } elseif (EnvHelper::isProduction() || $config['environment'] === 'production') {
+        } elseif (EnvHelper::isProduction() || ($config['environment'] ?? null) === 'production') {
             $this->base_url = Endpoint::PROD_OAUTH2;
         } else {
-            $env = EnvHelper::ENV;
-            throw new SSEnvException("Oauth2 - Environment '{$env}' OR Parameter 'environment' must be provided. Valid environment value is must be 'staging' or 'production'.");
+            $env = EnvHelper::getEnvironment();
+            throw new SSEnvException("Oauth2 - Environment '{$env}' OR Parameter 'environment' must be provided. Valid environment value is must be 'development', 'staging' or 'production'.");
         }
 
         if (isset($config['organization_id'])) {

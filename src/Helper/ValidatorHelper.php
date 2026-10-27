@@ -58,6 +58,18 @@ class ValidatorHelper
         }
     }
 
+    /**
+     * NIK selalu 16 digit angka. Diperiksa sebagai string supaya NIK yang
+     * diawali nol (mis. 0171...) tidak kehilangan digitnya saat dikonversi
+     * menjadi integer.
+     */
+    public static function nik(string $var_name, $val)
+    {
+        if (!is_string($val) || !preg_match('/^[0-9]{16}$/', $val)) {
+            throw new SSDataTypeException("{$var_name} is not a valid NIK. The valid value is exactly 16 digits, e.g. 3171022809990001.");
+        }
+    }
+
     public static function unsignedInt(string $var_name, string | int $val)
     {
         preg_match('/[0]|([1-9][0-9]*)/', $val, $match);
