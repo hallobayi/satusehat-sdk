@@ -60,7 +60,17 @@ class FileTokenStore implements TokenStoreInterface
         }
 
         // Access token adalah kredensial: batasi baca hanya untuk pemilik proses.
-        chmod($tmp, 0600);
+        // Windows tidak mengenal bit permission POSIX, chmod() di sana hanya
+        // mengatur flag read-only, jadi proteksi bergantung pada ACL direktori.
+        if (DIRECTORY_SEPARATOR === '\\') {
+            @chmod($tmp, 0600);
+        } elseif (!chmod($tmp, 0600)) {
+            // Menulis kredensial dengan permission yang tidak diketahui lebih
+            // berbahaya daripada gagal, jadi file sementara dibuang.
+            unlink($tmp);
+
+            throw new SSEnvException("Unable to restrict permission of token store at {$this->path} to 0600.");
+        }
 
         if (!rename($tmp, $this->path)) {
             unlink($tmp);
