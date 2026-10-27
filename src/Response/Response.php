@@ -112,9 +112,21 @@ class Response
                 $messages[] = $tmpMsg;
             }
 
+            // Bukan OperationOutcome: layanan lain (mis. KFA) memakai bentuk
+            // {"message": "..."} atau {"error": true, "message": "..."}.
+            // Tanpa fallback ini pesan errornya hilang dan hanya tersisa kode.
+            if ($messages === [] && is_array($content)) {
+                foreach (['message', 'error'] as $key) {
+                    if (isset($content[$key]) && is_string($content[$key]) && trim($content[$key]) !== '') {
+                        $messages[] = trim($content[$key]);
+                        break;
+                    }
+                }
+            }
+
             // 5xx dari gateway biasanya text/plain ("Gateway Timeout"), bukan
             // OperationOutcome. Kembalikan apa adanya agar tidak tampak kosong.
-            if ($messages === [] && $content === null && trim($this->content) !== '') {
+            if ($messages === [] && trim($this->content) !== '') {
                 $messages[] = trim($this->content);
             }
         } else {
