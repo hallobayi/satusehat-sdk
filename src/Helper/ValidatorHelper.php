@@ -87,7 +87,14 @@ class ValidatorHelper
 
     public static function required(string $var_name, $val)
     {
-        if (!isset($val) && empty($val) && $val != 0) {
+        // Sengaja tidak memakai empty(): empty() menganggap 0 dan false sebagai
+        // "kosong", padahal keduanya nilai yang sah untuk sebuah field FHIR.
+        // required() hanya memeriksa kehadiran nilai, bukan tipe atau isinya.
+        $is_missing = $val === null
+            || $val === ''
+            || (is_string($val) && trim($val) === '');
+
+        if ($is_missing) {
             throw new SSDataTypeException("{$var_name} is required.");
         }
     }
