@@ -2,6 +2,7 @@
 namespace agumil\SatuSehatSDK\KYC;
 
 use agumil\SatuSehatSDK\Exception\SSDataTypeException;
+use agumil\SatuSehatSDK\Exception\SSEnvException;
 use agumil\SatuSehatSDK\Helper\ValidatorHelper;
 use agumil\SatuSehatSDK\Interface\KYC\KycInterface;
 use agumil\SatuSehatSDK\Response\Response;
@@ -44,14 +45,24 @@ class Kyc extends Base implements KycInterface
      * @param string $urlToken `url_token` hasil `generateUrl()`
      * @param bool   $debugMode kirim `X-Debug-Mode: 1` agar challenge code
      *                          dikembalikan langsung tanpa widget KYC. Hanya
-     *                          untuk development/staging — server production
-     *                          menolaknya, dan mode ini melewati verifikasi
-     *                          yang seharusnya dilakukan pasien.
+     *                          untuk development/staging: mode ini melewati
+     *                          verifikasi yang seharusnya dilakukan pasien,
+     *                          sehingga ditolak di sini bila environment-nya
+     *                          production — bukan hanya mengandalkan penolakan
+     *                          server.
+     *
+     * @throws SSEnvException bila $debugMode diminta di production
      */
     public function generateChallengeCode(array $params, string $urlToken, bool $debugMode = false)
     {
         ValidatorHelper::required('url_token', $urlToken);
         $this->validateChallengePayload($params);
+
+        if ($debugMode && $this->environment === 'production') {
+            throw new SSEnvException(
+                "KYC - 'X-Debug-Mode' is only available in development or staging. It bypasses patient verification and must not be sent to the production endpoint."
+            );
+        }
 
         $headers = ['X-Frame-Token' => $urlToken];
 

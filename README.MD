@@ -35,6 +35,7 @@ This package is on-progress, documentation is very limited AND you may find out 
 * Resilient by default
   - Automatic retry for `429`/`5xx` with `Retry-After` support and exponential backoff
   - Only idempotent methods are retried, so a `POST` is never silently duplicated
+  - The token endpoint has its own `timeout`/`connect_timeout` (15s/5s by default) and every transport failure surfaces as `SSOauth2Exception`
 * Safe by default
   - Resource ids are validated before being interpolated into URLs
   - PHI is redacted before anything reaches your log
@@ -234,7 +235,7 @@ if ($response->getHttpCode() === 200) {
 Beberapa hal yang perlu diketahui:
 
 - `$urlToken` dikirim sebagai header `X-Frame-Token`. SDK tidak menyimpannya, jadi ambil dari respons `generate-url()` lalu teruskan sendiri.
-- `$debugMode = true` menambahkan `X-Debug-Mode: 1` supaya challenge code dikembalikan langsung tanpa widget KYC. Pakai hanya di development/staging: server production menolaknya, dan mode ini melewati verifikasi yang seharusnya dilakukan pasien.
+- `$debugMode = true` menambahkan `X-Debug-Mode: 1` supaya challenge code dikembalikan langsung tanpa widget KYC. Pakai hanya di development/staging: mode ini melewati verifikasi yang seharusnya dilakukan pasien, jadi SDK menolaknya sendiri (`SSEnvException`) bila environment-nya `production` — request tidak dikirim sama sekali.
 - NIK diperiksa 16 digit sebelum dikirim, karena respons memuat `ihs_number` milik NIK tersebut — salah ketik berarti challenge code untuk orang lain.
 - Lingkungan mengikuti `SATUSEHAT_ENV` (`.env` didahulukan) atau `'environment'` pada config. Nilai yang sah: `development`, `staging`, `production` — sama seperti modul lain.
 
@@ -260,7 +261,7 @@ What gets logged:
 | `warning` | A retryable failure that will be retried, including the delay used. |
 | `error` | The request failed permanently, or every retry was exhausted. |
 
-Query strings and JSON bodies are passed through `PhiRedactor`, which masks the values of sensitive keys (such as `identifier`, `nik`, `name`, `birthdate`, `telecom`, `address`, `photo`, and `contact`) with `[REDACTED]`. Keep the logger level at `DEBUG` only on development machines — even redacted payloads reveal request volume and resource types.
+Query strings and JSON bodies are passed through `PhiRedactor`, which works by **default-deny**: every value is replaced with `[REDACTED]` and only key names, plus a short list of structural fields (`resourceType`, `status`) and paging parameters (`_count`, `_offset`, ...), survive. Redacting a fixed list of "sensitive" keys is not enough for FHIR, because identity also lives in places whose key names look innocent — `subject.display`, `text.div`, and `note.text` all carried patient names and NIKs in earlier versions. Resource ids in the URL path (`/Patient/100000030009`) are masked for the same reason. Keep the logger level at `DEBUG` only on development machines — even redacted payloads reveal request volume and resource types.
 
 ## Token Caching
 
@@ -277,13 +278,24 @@ $oauth2 = new Oauth2([
 ]);
 ```
 
-The file is written with `0600` permissions using an atomic temp-file-plus-rename, so a reader never sees a half-written token. Refreshes run under an exclusive `flock`: when ten workers notice an expired token at the same moment, exactly one calls SATUSEHAT and the other nine pick up the result.
+The file is written with `0600` permissions using an atomic temp-file-plus-rename, so a reader never sees a half-written token. The mode is then **verified** with `fileperms()`, because `chmod()` reports success even on filesystems that cannot apply POSIX permissions (FAT/vfat, some network shares); in that case writing fails loudly instead of leaving a readable credential behind. Refreshes run under an exclusive `flock`: when ten workers notice an expired token at the same moment, exactly one calls SATUSEHAT and the other nine pick up the result.
+
+The stored token is signed with an HMAC keyed by your `client_secret`, which `Oauth2` injects automatically. A file that was written by someone else — for example a token belonging to a different organization — fails verification and is ignored, so clinical data cannot be steered to the wrong organization by dropping a file on disk. Files written by older versions (unsigned) are treated as absent and replaced on the next refresh. Note that two applications with different `client_secret` values cannot share one token file: each will reject the other's token and refresh on every call, which is the intended signal that they should not share it at all.
 
 > **Windows note**
-> Windows does not implement POSIX permission bits, so `chmod()` there only toggles the read-only flag and the file stays readable by other local accounts. On Windows, protect the directory with NTFS ACLs instead. Production PHP-FPM hosts are unaffected.
+> Windows does not implement POSIX permission bits, so `chmod()` there only toggles the read-only flag and `fileperms()` always reports `0666`. The SDK does not pretend otherwise: mode checks are skipped on Windows, and confidentiality relies on the ACL of the directory you point at. On Windows, protect that directory with NTFS ACLs. The HMAC check still applies on every platform. Production PHP-FPM hosts are unaffected.
 
 Point the path at a directory that is writable by the PHP user and outside your web root. The file contains a live credential — treat it like any other secret and never commit it.
 
+
+## Testing
+
+```bash
+composer install
+composer test
+```
+
+The suite runs on PHPUnit and needs no network access: Guzzle handlers are mocked, and KYC/FHIR transports are replaced with recorders. Two permission tests are skipped on Windows because the behaviour they assert (POSIX mode bits) does not exist there; `PosixFileTokenStore` in `tests/Support` covers the verification path on Windows instead.
 
 ## Credits
 

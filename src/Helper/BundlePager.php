@@ -84,6 +84,10 @@ class BundlePager
 
     public function isFinished(): bool
     {
-        return $this->finished;
+        // Batas halaman juga berarti selesai. Tanpa ini, pemakaian
+        // `while (! $pager->isFinished()) { $pager->next(); }` berputar
+        // selamanya: next() mengembalikan null setelah max_pages tetapi flag
+        // finished tidak pernah dinyalakan.
+        return $this->finished || $this->page >= $this->max_pages;
     }
 }
