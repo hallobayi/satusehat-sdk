@@ -48,6 +48,8 @@ This package is on-progress, documentation is very limited AND you may find out 
 
 To run this library, you'll need PHP 8.0+, and Composer. From your command line:
 
+> **Requirements:** `guzzlehttp/guzzle` 7.16+ and `guzzlehttp/psr7` 2.13+. Guzzle 6 is no longer supported — it is end-of-life and has advisories without fixes. Guzzle 8 is not supported yet: it requires `psr7` 3 and `promises` 3, which is a separate migration.
+
 ```bash
 # install this package
 $ composer require agumil/satusehat-sdk
@@ -296,6 +298,16 @@ composer test
 ```
 
 The suite runs on PHPUnit and needs no network access: Guzzle handlers are mocked, and KYC/FHIR transports are replaced with recorders. Two permission tests are skipped on Windows because the behaviour they assert (POSIX mode bits) does not exist there; `PosixFileTokenStore` in `tests/Support` covers the verification path on Windows instead.
+
+CI runs four jobs on every push and pull request:
+
+| Job | What it proves |
+| --- | --- |
+| `test` (PHP 8.0 – 8.4) | The suite passes on every version the library claims to support, and every file parses (`php -l`). |
+| `lowest` | `composer update --prefer-lowest` still works — the version floors in `composer.json` are real, not aspirational. |
+| `audit` | `composer audit` finds no known advisory in the locked dependencies. |
+
+PHP 8.0 and 8.1 resolve their own PHPUnit (9.6 and 10.5) because the locked PHPUnit 11 needs PHP 8.2; PHP 8.0 runs the same tests through `composer test:compat`, which skips the config file that PHPUnit 9.6 cannot parse.
 
 ## Credits
 

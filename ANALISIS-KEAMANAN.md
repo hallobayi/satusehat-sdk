@@ -23,7 +23,9 @@ Keempat temuan P0 beserta satu jebakan pager **sudah diperbaiki dan diverifikasi
 
 **Test permanen:** `composer test` — 43 test, 78 assertion, tanpa jaringan (Guzzle handler di-mock). Dua test permission di-skip di Windows karena yang diuji adalah bit POSIX; jalur verifikasinya tetap diuji lewat `PosixFileTokenStore`.
 
-**Temuan baru yang ikut ditutup:** `composer audit` melaporkan **13 advisory (1 high, CVE-2026-69246)** pada Guzzle 7.8.1 dan psr7 2.6.2. Lock dinaikkan ke Guzzle 7.16.1 / psr7 2.13.2 / promises 2.6.0 → **0 advisory**. Batas bawah dependensi ikut dinaikkan (`guzzle ^7.15.2`, `psr7 ^2.12.3`); ini **breaking** untuk pemakai Guzzle 6, yang sudah EOL dan tidak punya perbaikan untuk advisory tersebut.
+**Temuan baru yang ikut ditutup:** `composer audit` melaporkan **13 advisory (1 high, CVE-2026-69246)** pada Guzzle 7.8.1 dan psr7 2.6.2. Lock dinaikkan ke Guzzle **7.16.1** / psr7 **2.13.2** / promises **2.6.0** → **0 advisory**. Batas bawah dependensi ikut dinaikkan (`guzzle ^7.16`, `psr7 ^2.13`, `promises ^2.6`); ini **breaking** untuk pemakai Guzzle 6, yang sudah EOL dan tidak punya perbaikan untuk advisory tersebut. Guzzle 8 belum didukung karena memaksa psr7 3 + promises 3 — migrasi major terpisah, bukan sekadar naik versi.
+
+**CI:** `.github/workflows/ci.yml` menjalankan empat job — matriks PHP 8.0–8.4, `composer update --prefer-lowest` (membuktikan batas bawah dependensi benar-benar bisa dipasang), `composer audit`, dan `php -l` untuk seluruh file. Sebelum workflow ini ditulis, setiap jalur diuji lokal dengan PHPUnit 9.6 / 10.5 / 11.5 dan dengan `--prefer-lowest` (psr/log 1.1.0) agar run pertama tidak merah.
 
 **Skor setelah perbaikan: 8/10.** Sisa risiko bukan lagi "bocor/berhenti", melainkan kelengkapan: N6–N9, resource FHIR yang belum ada, dan tidak adanya CI (test ada, tetapi belum dijalankan otomatis).
 
@@ -223,12 +225,12 @@ while (!$pager->isFinished()) { $r = $pager->next(); ... }
 
 `retry_attempts=3` × `timeout=60` + jeda → satu panggilan bisa memblokir hingga ~3 menit. Pada request web, ini melewati `max_execution_time` PHP dan berakhir sebagai fatal error, bukan error yang bisa ditangani. Pertimbangkan `retry_total_budget_ms`.
 
-### N9 — Higiene dependensi & tidak ada test/CI (MEDIUM, proses)
+### N9 — Higiene dependensi & tidak ada test/CI (MEDIUM, proses) — 🟡 sebagian ditutup
 
-- `"minimum-stability": "dev"` masih ada → dependensi versi dev bisa terpasang.
-- `guzzlehttp/guzzle: ^6.5.8` masih diizinkan (Guzzle 6 EOL 2022).
-- **Tidak ada satu pun test, tidak ada `.github/`, tidak ada PHPUnit.** Padahal 19 commit terakhir menambah logika rawan: retry dengan backoff, single-flight lock, pager, redaksi PHI, KYC. Semua perbaikan di §2 saya verifikasi dengan skrip ad-hoc — itu seharusnya menjadi test permanen di repo, bukan pekerjaan manual sekali jalan.
-- Tidak ada `composer audit` maupun static analysis (PHPStan/Psalm).
+- `"minimum-stability": "dev"` masih ada → dependensi versi dev bisa terpasang. Ini bukan teori: saat menaikkan Guzzle, `composer update` sempat memilih `7.7.x-dev`. Job `lowest` di CI sekarang menangkap kasus seperti ini, tetapi `minimum-stability` sebaiknya dihapus di rilis berikutnya.
+- ~~`guzzlehttp/guzzle: ^6.5.8` masih diizinkan (Guzzle 6 EOL 2022).~~ Sudah dinaikkan ke `^7.16`, `psr7 ^2.13`, `promises ^2.6`.
+- ~~**Tidak ada satu pun test, tidak ada `.github/`, tidak ada PHPUnit.**~~ Sekarang ada 43 test (`composer test`) dan CI 4 job: matriks PHP 8.0–8.4, `--prefer-lowest`, dan `composer audit`.
+- Static analysis (PHPStan/Psalm) belum ada — masih terbuka.
 
 ---
 
